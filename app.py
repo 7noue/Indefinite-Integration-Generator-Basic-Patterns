@@ -150,8 +150,6 @@ class IntegrationEngine:
 # ==========================================
 
 class ApplicationUI:
-    """Manages Streamlit UI rendering and state."""
-    
     def __init__(self):
         self.engine = IntegrationEngine()
         self._initialize_state()
@@ -159,21 +157,36 @@ class ApplicationUI:
     def _initialize_state(self):
         if "history" not in st.session_state:
             st.session_state.history = []
-            
-    def render_sidebar(self):
-        st.sidebar.title("Computation History")
-        if not st.session_state.history:
-            st.sidebar.info("No computations yet.")
-            return
-            
-        if st.sidebar.button("Clear History", use_container_width=True):
-            st.session_state.history = []
-            st.rerun()
-            
-        st.sidebar.markdown("---")
-        for idx, item in enumerate(reversed(st.session_state.history)):
-            with st.sidebar.expander(f"Run {len(st.session_state.history) - idx}: {item['input']}"):
-                st.latex(item['result'].final_answer)
+        if "expr_input" not in st.session_state:
+            st.session_state.expr_input = ""
+        if "show_keyboard" not in st.session_state:
+            st.session_state.show_keyboard = False
+
+    def _append_to_input(self, val: str):
+        """Callback to add symbols from keyboard to input field."""
+        st.session_state.expr_input += val
+
+    def render_virtual_keyboard(self):
+        """Renders a toggleable math keyboard."""
+        st.write("### Math Keyboard")
+        
+        # Define layout
+        keys = [
+            [("x²", "**2"), ("x³", "**3"), ("xⁿ", "**"), ("√", "sqrt(")],
+            [("sin", "sin("), ("cos", "cos("), ("tan", "tan("), ("eˣ", "exp(")],
+            [("π", "pi"), ("+", " + "), ("-", " - "), ("*", " * ")],
+            [("/", " / "), ("(", "("), (")", ")"), ("Clear", "CLEAR")]
+        ]
+        
+        for row in keys:
+            cols = st.columns(4)
+            for i, (label, val) in enumerate(row):
+                with cols[i]:
+                    if label == "Clear":
+                        if st.button(label, use_container_width=True, key=f"btn_{label}"):
+                            st.session_state.expr_input = ""
+                    else:
+                        st.button(label, on_click=self._append_to_input, args=(val,), use_container_width=True, key=f"btn_{label}")
 
     def render_trail(self, res: ComputationResult):
         st.markdown("---")
@@ -231,41 +244,48 @@ class ApplicationUI:
             st.caption(f"**Timestamp:** {res.summary.get('Timestamp', 'N/A')}")
 
     def run(self):
-        st.set_page_config(page_title="Symbolic Integrator", page_icon="∫", layout="wide")
-        st.title("∫ Symbolic Indefinite Integration Generator")
-        st.markdown("Enter a mathematical expression in terms of `x` to compute its indefinite integral.")
+        st.set_page_config(page_title="Symbolic Integrator", layout="centered")
+        st.title("∫ Indefinite Integration Generator")
         
-        self.render_sidebar()
-        
-        # Input Section
-        with st.form("compute_form"):
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                expr_input = st.text_input("Integrand f(x)", value="3*x**2 + 2*x + sin(x)", placeholder="e.g., 3*x**2 + sin(x)")
-            with col2:
-                st.markdown("<br>", unsafe_allow_html=True) # Alignment fix
-                submit_button = st.form_submit_button("Compute", type="primary", use_container_width=True)
-                
-        # Computation Trigger
+        # Keyboard Toggle
+        if st.toggle("⌨️ Show Virtual Keyboard", value=st.session_state.show_keyboard):
+            self.render_virtual_keyboard()
+            st.markdown("---")
+
+        # Visual Input Bar (Framed with Integral signs)
+        col1, col2, col3 = st.columns([1, 6, 1])
+        with col1:
+            st.markdown("<h2 style='text-align: right;'>∫</h2>", unsafe_allow_html=True)
+        with col2:
+            st.text_input("Integrand", key="expr_input", label_visibility="collapsed", placeholder="Enter expression, e.g., 3*x**2")
+        with col3:
+            st.markdown("<h2>dx</h2>", unsafe_allow_html=True)
+            
+        submit_button = st.button("Compute", type="primary", use_container_width=True)
+
         if submit_button:
-            if not expr_input.strip():
-                st.error("Please enter a valid mathematical expression.")
+            if not st.session_state.expr_input.strip():
+                st.error("Please enter an integrand.")
                 return
                 
-            with st.spinner("Computing symbolic integration and verifying..."):
-                result = self.engine.compute(expr_input)
+            with st.spinner("Integrating..."):
+                current_input = st.session_state.expr_input.strip()
+                result = self.engine.compute(current_input)
                 
                 if result.is_success:
                     self.render_trail(result)
-                    # Save to history
-                    st.session_state.history.append({
-                        "input": expr_input,
-                        "result": result
-                    })
+                    
+                    # --- NEW LOGIC: Prevent duplicate consecutive history entries ---
+                    # Only append if history is empty OR the last input is different
+                    if not st.session_state.history or st.session_state.history[-1]["input"] != current_input:
+                        st.session_state.history.append({
+                            "input": current_input,
+                            "result": result
+                        })
                 else:
-                    st.error("Computation Failed")
-                    st.error(result.error_message)
+                    st.error(f"Computation Failed: {result.error_message}")
 
+                    
 if __name__ == "__main__":
     app = ApplicationUI()
     app.run()
